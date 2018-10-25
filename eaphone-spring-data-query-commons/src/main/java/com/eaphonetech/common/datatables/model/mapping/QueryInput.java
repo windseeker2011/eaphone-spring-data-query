@@ -7,10 +7,12 @@ import java.util.Map;
 
 import javax.validation.constraints.Min;
 
+import com.eaphonetech.common.datatables.model.mapping.filter.QueryField;
+
 import lombok.Data;
 
 @Data
-public class DataTablesInput {
+public class QueryInput {
 
     /**
      * Draw counter. This is used by DataTables to ensure that the Ajax returns from server-side
@@ -45,24 +47,12 @@ public class DataTablesInput {
     /**
      * Order parameter
      */
-    private List<Order> order = new ArrayList<Order>();
+    private List<QueryOrder> orders = new ArrayList<QueryOrder>();
 
     /**
      * Per-column search parameter
      */
-    private List<Column> columns = new ArrayList<Column>();
-
-    /**
-     * 
-     * @return a {@link Map} of {@link Column} indexed by name
-     */
-    public Map<String, Column> getColumnsAsMap() {
-        Map<String, Column> map = new HashMap<String, Column>();
-        for (Column column : columns) {
-            map.put(column.getData(), column);
-        }
-        return map;
-    }
+    private Map<String, QueryField> filters = new HashMap<>();
 
     /**
      * Find a column by its name
@@ -70,15 +60,22 @@ public class DataTablesInput {
      * @param columnName the name of the column
      * @return the given Column, or <code>null</code> if not found
      */
-    public Column getColumn(String columnName) {
+    public QueryField getField(String columnName) {
         if (columnName == null) {
             return null;
         }
-        for (Column column : columns) {
-            if (columnName.equals(column.getData())) {
-                return column;
-            }
+        if (this.filters.containsKey(columnName)) {
+            QueryField qf = this.filters.get(columnName);
+            qf.setField(columnName);
+            return qf;
         }
         return null;
+    }
+
+    public void addField(QueryField qf) {
+        if (this.filters == null) {
+            this.filters = new HashMap<>();
+        }
+        this.filters.put(qf.getField(), qf);
     }
 }

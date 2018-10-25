@@ -2,23 +2,24 @@ package com.eaphonetech.common.datatables.jpa;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.lang.NonNull;
 import org.springframework.util.StringUtils;
 
-import com.eaphonetech.common.datatables.model.mapping.Column;
 import com.eaphonetech.common.datatables.model.mapping.ColumnType;
-import com.eaphonetech.common.datatables.model.mapping.DataTablesInput;
-import com.eaphonetech.common.datatables.model.mapping.Search;
+import com.eaphonetech.common.datatables.model.mapping.QueryInput;
+import com.eaphonetech.common.datatables.model.mapping.filter.QueryField;
+import com.eaphonetech.common.datatables.model.mapping.filter.QueryFilter;
 
 abstract class AbstractPredicateBuilder<T> {
-    protected final DataTablesInput input;
+    protected final QueryInput input;
     final boolean hasGlobalFilter;
     final Node<Filter> tree;
 
-    AbstractPredicateBuilder(DataTablesInput input) {
+    AbstractPredicateBuilder(QueryInput input) {
         this.input = input;
         this.hasGlobalFilter = input.getSearch() != null && StringUtils.hasText(input.getSearch().getValue());
         if (this.hasGlobalFilter) {
@@ -29,21 +30,15 @@ abstract class AbstractPredicateBuilder<T> {
         initTree(input);
     }
 
-    private void initTree(DataTablesInput input) {
-        for (Column column : input.getColumns()) {
-            if (column.isSearchable()) {
-                // datatables impl.
-                addChild(tree, 0, column.getData().split("\\."), column.getSearch());
-            }
-            if (column.getFilter() != null) {
-                addChild(tree, 0, column.getData().split("\\."), ColumnType.parse(column.getType()),
-                        column.getFilter());
-            }
+    private void initTree(QueryInput input) {
+        for (Map.Entry<String, QueryField> entry : input.getFilters().entrySet()) {
+            final String fieldName = entry.getKey();
+            final QueryField field = entry.getValue();
+            addChild(tree, 0, fieldName.split("\\."), ColumnType.parse(field.getType()), field);
         }
     }
 
-    private void addChild(Node<Filter> parent, int index, String[] names, ColumnType type,
-            com.eaphonetech.common.datatables.model.mapping.Filter filter) {
+    private void addChild(Node<Filter> parent, int index, String[] names, ColumnType type, QueryFilter filter) {
         boolean isLast = index + 1 == names.length;
         if (isLast) {
             Node<Filter> child = new Node<Filter>(names[index], new ColumnFilter(type, filter));
@@ -54,32 +49,21 @@ abstract class AbstractPredicateBuilder<T> {
         }
     }
 
-    private void addChild(Node<Filter> parent, int index, String[] names, Search search) {
-        boolean isLast = index + 1 == names.length;
-        if (isLast) {
-            boolean hasColumnFilter = search != null && StringUtils.hasText(search.getValue());
-            parent.addChild(
-                    new Node<>(names[index], hasColumnFilter ? new ColumnSearchFilter(search.getValue()) : null));
-        } else {
-            Node<Filter> child = parent.getOrCreateChild(names[index]);
-            addChild(child, index + 1, names, search);
-        }
-    }
-
     /**
-     * Creates a 'LIMIT .. OFFSET .. ORDER BY ..' clause for the given {@link DataTablesInput}.
+     * Creates a 'LIMIT .. OFFSET .. ORDER BY ..' clause for the given {@link QueryInput}.
      *
      * @return a {@link Pageable}, must not be {@literal null}.
      */
     public Pageable createPageable() {
         List<Sort.Order> orders = new ArrayList<>();
-        for (com.eaphonetech.common.datatables.model.mapping.Order order : input.getOrder()) {
-            Column column = input.getColumns().get(order.getColumn());
-            if (column.isOrderable()) {
-                String sortColumn = column.getData();
-                Sort.Direction sortDirection = Sort.Direction.fromString(order.getDir());
-                orders.add(new Sort.Order(sortDirection, sortColumn));
+        for (com.eaphonetech.common.datatables.model.mapping.QueryOrder order : input.getOrders()) {
+            String sortColumn = order.getField();
+            QueryField inputField = input.getField(order.getField());
+            if (inputField != null) {
+                sortColumn = inputField.getField();
             }
+            Sort.Direction sortDirection = Sort.Direction.fromString(order.getDir());
+            orders.add(new Sort.Order(sortDirection, sortColumn));
         }
         Sort sort = orders.isEmpty() ? Sort.unsorted() : Sort.by(orders);
 

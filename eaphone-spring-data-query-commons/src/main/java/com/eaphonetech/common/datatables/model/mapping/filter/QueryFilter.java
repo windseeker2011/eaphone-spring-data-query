@@ -1,9 +1,9 @@
-package com.eaphonetech.common.datatables.model.mapping;
+package com.eaphonetech.common.datatables.model.mapping.filter;
 
 import lombok.Data;
 
 @Data
-public class Filter {
+public class QueryFilter {
     private String gt;
     private String gte;
     private String lt;
@@ -13,6 +13,7 @@ public class Filter {
     private String in;
     private String nin;
     private String regex;
+    private String like;
     private Boolean exists;
     private Boolean isNull;
     private Boolean isEmpty;

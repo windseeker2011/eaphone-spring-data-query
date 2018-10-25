@@ -13,13 +13,14 @@ import javax.validation.Valid;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.eaphonetech.common.datatables.model.mapping.DataTablesInput;
-import com.eaphonetech.common.datatables.model.mapping.DataTablesOutput;
+import com.eaphonetech.common.datatables.model.mapping.QueryInput;
+import com.eaphonetech.common.datatables.model.mapping.QueryOutput;
 import com.eaphonetech.common.datatables.samples.jpa.entities.Order;
 import com.eaphonetech.common.datatables.samples.jpa.repo.OrderRepository;
 import com.fasterxml.jackson.annotation.JsonView;
@@ -33,13 +34,19 @@ public class OrderRestController {
     @Autowired
     private OrderRepository repo;
 
-    @JsonView(DataTablesOutput.View.class)
-    @RequestMapping(value = "/data/orders", method = RequestMethod.GET)
-    public DataTablesOutput<Order> getOrders(@Valid DataTablesInput input,
-            @RequestParam(required = false) Date startDate, @RequestParam(required = false) Date endDate) {
+    @JsonView(QueryOutput.View.class)
+    @GetMapping("/data/orders")
+    public QueryOutput<Order> getOrders(@Valid QueryInput input, @RequestParam(required = false) Date startDate,
+            @RequestParam(required = false) Date endDate) {
         Specification<Order> spec = between(startDate, endDate);
 
         return repo.findAll(input, spec);
+    }
+
+    @JsonView(QueryOutput.View.class)
+    @PostMapping("/data/orders")
+    public QueryOutput<Order> getOrdersByPost(@Valid @RequestBody QueryInput input) {
+        return repo.findAll(input);
     }
 
     private Specification<Order> between(Date startDate, Date endDate) {
@@ -50,10 +57,10 @@ public class OrderRestController {
             public Predicate toPredicate(Root<Order> root, CriteriaQuery<?> query, CriteriaBuilder criteriaBuilder) {
                 List<Predicate> predicates = new LinkedList<>();
                 if (startDate != null) {
-                    predicates.add(criteriaBuilder.greaterThanOrEqualTo(root.get(""), startDate));
+                    predicates.add(criteriaBuilder.greaterThanOrEqualTo(root.get("date"), startDate));
                 }
                 if (endDate != null) {
-                    predicates.add(criteriaBuilder.lessThan(root.get(""), endDate));
+                    predicates.add(criteriaBuilder.lessThan(root.get("date"), endDate));
                 }
                 return criteriaBuilder.and(predicates.toArray(new Predicate[0]));
             }

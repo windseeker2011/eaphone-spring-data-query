@@ -7,6 +7,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -25,19 +26,18 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.repository.query.MongoEntityInformation;
 import org.springframework.util.StringUtils;
 
-import com.eaphonetech.common.datatables.model.mapping.Column;
 import com.eaphonetech.common.datatables.model.mapping.ColumnType;
-import com.eaphonetech.common.datatables.model.mapping.DataTablesInput;
-import com.eaphonetech.common.datatables.model.mapping.Filter;
-import com.eaphonetech.common.datatables.model.mapping.Search;
-import com.eaphonetech.common.datatables.mongodb.model.DataTablesCount;
+import com.eaphonetech.common.datatables.model.mapping.QueryInput;
+import com.eaphonetech.common.datatables.model.mapping.QueryOrder;
+import com.eaphonetech.common.datatables.model.mapping.filter.QueryField;
+import com.eaphonetech.common.datatables.mongodb.model.QueryCount;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Predicate;
 
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
-public class DataTablesUtils {
+class QueryUtils {
 
     private static final String COMMA = ",";
 
@@ -53,8 +53,8 @@ public class DataTablesUtils {
         }
     }
 
-    public static <T, ID extends Serializable> Query getQuery(MongoEntityInformation<T, ID> entityInformation,
-            final DataTablesInput input) {
+    static <T, ID extends Serializable> Query getQuery(MongoEntityInformation<T, ID> entityInformation,
+            final QueryInput input) {
         Query q = new Query();
         List<Criteria> criteriaList = getCriteria(input, entityInformation);
         if (criteriaList != null) {
@@ -92,7 +92,7 @@ public class DataTablesUtils {
             final String currentLevelName = fieldNameParts[currentIndex];
             String decidedName = null;
             Class<?> currentLevelFieldType = null;
-            
+
             // do logic and append more
             @SuppressWarnings("unchecked")
             Set<Field> possibleFields = ReflectionUtils.getAllFields(javaType, new Predicate<Field>() {
@@ -168,107 +168,86 @@ public class DataTablesUtils {
     }
 
     /**
-     * Convert a {@link DataTablesInput} to Criteia
+     * Convert a {@link QueryInput} to Criteia
      * 
      * @param input
      * @return
      */
-    private static <T, ID extends Serializable> List<Criteria> getCriteria(final DataTablesInput input,
+    private static <T, ID extends Serializable> List<Criteria> getCriteria(final QueryInput input,
             MongoEntityInformation<T, ID> entityInformation) {
         List<Criteria> result = new LinkedList<>();
         // check for each searchable column whether a filter value exists
-        List<Column> columns = input.getColumns();
-
-        for (final Column column : columns) {
-            final Search search = column.getSearch();
-            final ColumnType type = ColumnType.parse(column.getType());
-            final Filter filter = column.getFilter();
-            if (column.hasValidSearch()) {
-                // search != null && issearchable == true && search.value.length > 0
-                final String searchValue = search.getValue();
-                Criteria c = Criteria.where(getFieldName(entityInformation.getJavaType(), column.getData()));
-                if (search.isRegex()) {
-                    // is regex, so treat directly as regular expression
-                    c.regex(searchValue);
+        for (final Map.Entry<String, QueryField> entry : input.getFilters().entrySet()) {
+            final QueryField filter = entry.getValue();
+            final String fieldName = entry.getKey();
+            final ColumnType type = ColumnType.parse(filter.getType());
+            // handle column.filter
+            if (filter != null) {
+                boolean hasValidCrit = false;
+                Criteria c = Criteria.where(getFieldName(entityInformation.getJavaType(), fieldName));
+                if (StringUtils.hasLength(filter.getEq())) {
+                    // $eq takes first place
+                    c.is(type.tryConvert(filter.getEq()));
+                    hasValidCrit = true;
+                } else if (StringUtils.hasLength(filter.getNe())) {
+                    // $ne
+                    c.ne(type.tryConvert(filter.getNe()));
+                    hasValidCrit = true;
                 } else {
-                    final Object parsedSearchValue = type.tryConvert(searchValue);
-                    if (parsedSearchValue instanceof String) {
-                        c.regex(getLikeFilterPattern(search.getValue()));
-                    } else {
-                        // numeric values , treat as $eq
-                        c.is(parsedSearchValue);
+                    if (StringUtils.hasLength(filter.getIn())) {
+                        // $in takes second place
+                        c.in(convertArray(type, filter.getIn()));
+                        hasValidCrit = true;
+                    }
+
+                    if (StringUtils.hasLength(filter.getNin())) {
+                        c.nin(convertArray(type, filter.getNin()));
+                        hasValidCrit = true;
+                    }
+
+                    if (StringUtils.hasLength(filter.getRegex())) {
+                        // $regex also works here
+                        c.regex(filter.getRegex());
+                        hasValidCrit = true;
+                    }
+
+                    if (filter.getIsNull() != null && filter.getIsNull().booleanValue()) {
+                        c.is(null);
+                        hasValidCrit = true;
+                    }
+
+                    if (filter.getIsEmpty() != null && filter.getIsEmpty().booleanValue()) {
+                        c.is("");
+                        hasValidCrit = true;
+                    }
+
+                    if (filter.getExists() != null) {
+                        c.exists(filter.getExists().booleanValue());
+                        hasValidCrit = true;
+                    }
+
+                    if (type.isComparable()) {
+                        // $gt, $lt, etc. only works if type is comparable
+                        if (StringUtils.hasLength(filter.getGt())) {
+                            c.gt(type.tryConvert(filter.getGt()));
+                            hasValidCrit = true;
+                        }
+                        if (StringUtils.hasLength(filter.getGte())) {
+                            c.gte(type.tryConvert(filter.getGte()));
+                            hasValidCrit = true;
+                        }
+                        if (StringUtils.hasLength(filter.getLt())) {
+                            c.lt(type.tryConvert(filter.getLt()));
+                            hasValidCrit = true;
+                        }
+                        if (StringUtils.hasLength(filter.getLte())) {
+                            c.lte(type.tryConvert(filter.getLte()));
+                            hasValidCrit = true;
+                        }
                     }
                 }
-                result.add(c);
-            } else {
-                // handle column.filter
-                if (filter != null) {
-                    boolean hasValidCrit = false;
-                    Criteria c = Criteria.where(getFieldName(entityInformation.getJavaType(), column.getData()));
-                    if (StringUtils.hasLength(filter.getEq())) {
-                        // $eq takes first place
-                        c.is(type.tryConvert(filter.getEq()));
-                        hasValidCrit = true;
-                    } else if (StringUtils.hasLength(filter.getNe())) {
-                        // $ne
-                        c.ne(type.tryConvert(filter.getNe()));
-                        hasValidCrit = true;
-                    } else {
-                        if (StringUtils.hasLength(filter.getIn())) {
-                            // $in takes second place
-                            c.in(convertArray(type, filter.getIn()));
-                            hasValidCrit = true;
-                        }
-
-                        if (StringUtils.hasLength(filter.getNin())) {
-                            c.nin(convertArray(type, filter.getNin()));
-                            hasValidCrit = true;
-                        }
-
-                        if (StringUtils.hasLength(filter.getRegex())) {
-                            // $regex also works here
-                            c.regex(filter.getRegex());
-                            hasValidCrit = true;
-                        }
-
-                        if (filter.getIsNull() != null && filter.getIsNull().booleanValue()) {
-                            c.is(null);
-                            hasValidCrit = true;
-                        }
-
-                        if (filter.getIsEmpty() != null && filter.getIsEmpty().booleanValue()) {
-                            c.is("");
-                            hasValidCrit = true;
-                        }
-
-                        if (filter.getExists() != null) {
-                            c.exists(filter.getExists().booleanValue());
-                            hasValidCrit = true;
-                        }
-
-                        if (type.isComparable()) {
-                            // $gt, $lt, etc. only works if type is comparable
-                            if (StringUtils.hasLength(filter.getGt())) {
-                                c.gt(type.tryConvert(filter.getGt()));
-                                hasValidCrit = true;
-                            }
-                            if (StringUtils.hasLength(filter.getGte())) {
-                                c.gte(type.tryConvert(filter.getGte()));
-                                hasValidCrit = true;
-                            }
-                            if (StringUtils.hasLength(filter.getLt())) {
-                                c.lt(type.tryConvert(filter.getLt()));
-                                hasValidCrit = true;
-                            }
-                            if (StringUtils.hasLength(filter.getLte())) {
-                                c.lte(type.tryConvert(filter.getLte()));
-                                hasValidCrit = true;
-                            }
-                        }
-                    }
-                    if (hasValidCrit) {
-                        result.add(c);
-                    }
+                if (hasValidCrit) {
+                    result.add(c);
                 }
             }
         }
@@ -300,38 +279,29 @@ public class DataTablesUtils {
     }
 
     /**
-     * Creates a '$sort' clause for the given {@link DataTablesInput}.
+     * Creates a '$sort' clause for the given {@link QueryInput}.
      * 
-     * @param input the {@link DataTablesInput} mapped from the Ajax request
+     * @param input the {@link QueryInput} mapped from the Ajax request
      * @return a {@link Pageable}, must not be {@literal null}.
      */
-    public static Pageable getPageable(DataTablesInput input) {
+    static Pageable getPageable(QueryInput input) {
         List<Order> orders = new ArrayList<Order>();
-        for (com.eaphonetech.common.datatables.model.mapping.Order order : input.getOrder()) {
-            Column column = null;
-            if (StringUtils.hasLength(order.getData())) {
-                column = input.getColumn(order.getData());
-            } else if (order.getColumn() != null && input.getColumns().size() > order.getColumn()) {
-                if (order.getColumn() != null && input.getColumns() != null
-                        && input.getColumns().size() > order.getColumn()) {
-                    column = input.getColumns().get(order.getColumn());
-                } else {
-                    column = input.getColumn(order.getData());
-                }
+        for (QueryOrder order : input.getOrders()) {
+            QueryField field = null;
+            if (StringUtils.hasLength(order.getField())) {
+                field = input.getField(order.getField());
             }
 
-            if (column == null) {
-                if (StringUtils.hasLength(order.getData())) {
+            if (field == null) {
+                if (StringUtils.hasLength(order.getField())) {
                     // in case if input has no columns defined
                     Direction sortDirection = Direction.fromString(order.getDir());
-                    orders.add(new Order(sortDirection, order.getData()));
+                    orders.add(new Order(sortDirection, order.getField()));
                 } else {
                     log.debug("Warning: unable to find column by specified order {}", order);
                 }
-            } else if (!column.isOrderable()) {
-                log.debug("Warning: column {} is not orderable, order is ignored", column);
             } else {
-                String sortColumn = column.getData();
+                String sortColumn = field.getField();
                 Direction sortDirection = Direction.fromString(order.getDir());
                 orders.add(new Order(sortDirection, sortColumn));
             }
@@ -410,13 +380,13 @@ public class DataTablesUtils {
     }
 
     /**
-     * Convert {@link DataTablesInput} to {@link AggregationOperation}[], mainly for column searches.
+     * Convert {@link QueryInput} to {@link AggregationOperation}[], mainly for column searches.
      * 
      * @param input
      * @return
      */
     private static <T, ID extends Serializable> List<AggregationOperation> toAggregationOperation(
-            MongoEntityInformation<T, ID> entityInformation, DataTablesInput input) {
+            MongoEntityInformation<T, ID> entityInformation, QueryInput input) {
         List<AggregationOperation> result = new LinkedList<>();
         List<Criteria> criteriaList = getCriteria(input, entityInformation);
         if (criteriaList != null) {
@@ -428,7 +398,7 @@ public class DataTablesUtils {
     }
 
     /**
-     * Create an {@link TypedAggregation} with specified {@link DataTablesInput} as filter, plus specified
+     * Create an {@link TypedAggregation} with specified {@link QueryInput} as filter, plus specified
      * {@link AggregationOperation}[], but only act as <code>$count</code>
      * <p>This basically creates an aggregation pipeline as follows:</p>
      * 
@@ -446,8 +416,8 @@ public class DataTablesUtils {
      * @param operations
      * @return
      */
-    public static <T, ID extends Serializable> TypedAggregation<DataTablesCount> makeAggregationCountOnly(
-            MongoEntityInformation<T, ID> entityInformation, DataTablesInput input, AggregationOperation[] operations) {
+    static <T, ID extends Serializable> TypedAggregation<QueryCount> makeAggregationCountOnly(
+            MongoEntityInformation<T, ID> entityInformation, QueryInput input, AggregationOperation[] operations) {
         List<AggregationOperation> opList = new LinkedList<>();
         if (operations != null) {
             for (int i = 0; i < operations.length; i++) {
@@ -458,11 +428,11 @@ public class DataTablesUtils {
         opList.addAll(toAggregationOperation(entityInformation, input));
 
         opList.add(group().count().as("_count"));
-        return newAggregation(DataTablesCount.class, opList);
+        return newAggregation(QueryCount.class, opList);
     }
 
     /**
-     * Create an {@link TypedAggregation} with specified {@link DataTablesInput} as filter, plus specified
+     * Create an {@link TypedAggregation} with specified {@link QueryInput} as filter, plus specified
      * {@link AggregationOperation}[]
      * 
      * @param classOfT
@@ -471,7 +441,7 @@ public class DataTablesUtils {
      * @param operations
      * @return
      */
-    public static <T> TypedAggregation<T> makeAggregation(Class<T> classOfT, DataTablesInput input, Pageable pageable,
+    static <T> TypedAggregation<T> makeAggregation(Class<T> classOfT, QueryInput input, Pageable pageable,
             AggregationOperation[] operations) {
         List<AggregationOperation> opList = new LinkedList<>();
         if (operations != null) {

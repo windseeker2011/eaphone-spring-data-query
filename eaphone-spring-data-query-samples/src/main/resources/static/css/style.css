@@ -1,0 +1,14 @@
+html,
+body {
+}
+
+.container-fluid {
+}
+
+#input-post-data {
+    min-height: 400px;
+}
+
+#server-response {
+	max-height: 600px;
+}
